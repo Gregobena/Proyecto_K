@@ -147,18 +147,21 @@ class GestorPrincipal:
         except Exception as e: 
             print("Error:",e)
  
-    def check_stock(self,venta): # arreglar problema de que quede stock viejo por no registrar n
+    def get_lotes(self,dv): # arreglar problema de que quede stock viejo por no registrar (error humano) proximamente
         try: 
             if self.conn:
                 cur = self.conn.cursor()
                 query = ''' 
-                    SELECT l.id 
-                    FROM Lote l 
-                    WHERE l.prod_id = ? 
-                    ORDER BY l.fecha_hora ASC
+                    SELECT l.id,l.costo_unitario, l.stock,p.precio_venta
+                    FROM Lote l JOIN Prod p on p.prod_id = l.prod_id
+                    WHERE l.prod_id = ? and l.stock > 0 
+                    ORDER BY l.fecha_hora DESC
                 '''
-                cur.execute(query,(venta["prod_id"]))
+                cur.execute(query,(dv["prod_id"]))
                 lotes = cur.fetchall()
+                return lotes 
+        except Exception as e: 
+            print("Error en buscar lotes:", e)
 
 
 
@@ -171,10 +174,12 @@ class GestorPrincipal:
             if self.conn: 
                 cur = self.conn.cursor()
                 ingreso_total,costo_total  =  0, 0 
+
                 for dv in venta:
+                    lotes = get_lotes(venta)
                     dv["costo_unitario"], dv["precio_venta"] = 0, 0         
                     query = '''
-                        SELECT lot.costo_un, prod.precio_venta 
+                        SELECT lot.costo_unitario, prod.precio_venta 
                         FROM Prod pr join Lote lot on (pr.prod_id = lot.prod_id)
                         Where pr.prod_id = ?
                     '''
