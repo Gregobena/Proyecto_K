@@ -39,7 +39,7 @@ class GestorPrincipal:
                     CREATE TABLE Venta (
                         venta_id INT PRIMARY KEY AUTOINCREMENT,
                         fecha_hora DATETIME DEFAULT CURRENT_TIMESTAMP,  
-                        total REAL, 
+                        ganancia REAL, 
                         forma_pago TEXT
                     );
 
@@ -57,7 +57,7 @@ class GestorPrincipal:
                         venta_id INT,
                         cantidad INT,
                         precio_unitario REAL, 
-                        costo_historico REAL,
+                        costo_unitario REAL,
                         FOREIGN KEY (prod_id) REFERENCES Prod(prod_id),
                         FOREIGN KEY (venta_id) REFERENCES Venta(venta_id)
                     );
@@ -72,12 +72,12 @@ class GestorPrincipal:
                         FOREIGN KEY (Compra_id) REFERENCES Compra(Compra_id)
                     );
 
-                    CREATE TABLE Lotes ( 
+                    CREATE TABLE Lote ( 
                         lote_id INT PRIMARY KEY AUTOINCREMENT, 
                         prod_id INT, 
                         fecha_hora DATETIME DEFAULT CURRENT_TIMESTAMP, 
                         stock INT, 
-                        costo_un REAL, 
+                        costo_unitario REAL, 
                         dc_id INT, 
                         FOREIGN KEY (dc_id) REFERENCES  Detalle_Compra(dc_id)
                     )
@@ -86,6 +86,7 @@ class GestorPrincipal:
                 cur.executescript(query)
                 cur.close()
                 print("Tablas creadas exitosamente")
+                conn.commit()
             else:
                 print("Error iniciando, no conectado a sqlite3")
         except Exception as e: 
@@ -145,23 +146,102 @@ class GestorPrincipal:
                 cur.close()
         except Exception as e: 
             print("Error:",e)
+ 
+    def check_stock(self,venta): # arreglar problema de que quede stock viejo por no registrar n
+        try: 
+            if self.conn:
+                cur = self.conn.cursor()
+                query = ''' 
+                    SELECT l.id 
+                    FROM Lote l 
+                    WHERE l.prod_id = ? 
+                    ORDER BY l.fecha_hora ASC
+                '''
+                cur.execute(query,(venta["prod_id"]))
+                lotes = cur.fetchall()
 
-    def set_venta(self,venta): # BUSCADOR  QUE TRADUCE LA INFO    
+
+
+
+    def set_venta(self,venta,pago=None): # BUSCADOR  QUE TRADUCE LA INFO    
         """
         Agrega la venta al sistema, ingresa unicamente venta[i]["prod_id"] y venta[i]["cant"] i = {1,2,..,n}
         """ 
+        try: 
+            if self.conn: 
+                cur = self.conn.cursor()
+                ingreso_total,costo_total  =  0, 0 
+                for dv in venta:
+                    dv["costo_unitario"], dv["precio_venta"] = 0, 0         
+                    query = '''
+                        SELECT lot.costo_un, prod.precio_venta 
+                        FROM Prod pr join Lote lot on (pr.prod_id = lot.prod_id)
+                        Where pr.prod_id = ?
+                    '''
+                    cur.execute(query,(dv["prod_id"]))
+                    dv["costo_unitario"], dv["precio_venta"] = cur.fetchone()
+
+                    ingreso_total += precio_venta * dv["cant"]
+                    costo_total += costo_unitario * dv["cant"]
+
+                query = '''
+                    INSERT INTO Venta(ingreso_total,costo_total,ganancia,pago)
+                    VALUES (?,?,?,?)
+                    RETURNING venta_id
+                '''
+                ganancia = ingreso_total - costo_total 
+                cur.execute(query,(ingreso_total,costo_total,ganancia,pago))
+                venta_id = cur.fetchone()
+                for dv in venta: 
+                    dv["venta_id"] = venta_id
+                query = ''' 
+                    INSERT INTO Detalle_venta(prod_id,cantidad,costo_unitario,precio_unitario)
+                    Values (:prod_id,:cant,:costo_unitario,:precio_unitario)
+                '''
+                cur.executemany(query,venta)
+
 
         try: 
             if self.conn: 
                 cur = self.conn.cursor()
-                for dv in venta: # dv = detalle_venta 
+                ingreso_total,costo_total  =  0, 0 
+                query = '''
+                    INSERT INTO Venta(ingreso_total,costo_total,ganancia,pago)
+                    VALUES (?,?,?,?)
+                    RETURNING venta_id
+                '''
+                cur.execute(query,(0,0,0,pago))
+                venta_id = cur.fetchone()
+
+                for dv in venta:
                     query = '''
-                    SELECT lot.costo_un, prod.precio_venta 
-                    FROM Prod pr join Lote lot on (pr.prod_id = lot.prod_id)
-                    Where pr.prod_id = ?
+                        INSERT INTO Detalle_venta (prod_id,cantidad,costo_unitario,precio_unitario,venta_id)
+                        SELECT p.prod_id, :cant, L.costo_unitario, p.precio_venta, :venta_id
+                        FROM Prod p join Lote l on (p.prod_id = l.prod_id)
+                        WHERE p.prod_id = :prod_id 
+                        ORDER BY L.fecha_hora DESC
+                        LIMIT 1 
                     '''
-                    cur.execute(query,(dv.prod_id))
-                    costo, precio_venta = cur.fetchone()
+                    cur.execute(query,(dv["prod_id"]))
+                    dv["costo_unitario"], dv["precio_venta"] = cur.fetchone()
+
+                    ingreso_total += precio_venta * dv["cant"]
+                    costo_total += costo_unitario * dv["cant"]
+
+                query = '''
+                    INSERT INTO Venta(ingreso_total,costo_total,ganancia,pago)
+                    VALUES (?,?,?,?)
+                    RETURNING venta_id
+                '''
+                ganancia = ingreso_total - costo_total 
+                cur.execute(query,(ingreso_total,costo_total,ganancia,pago))
+                venta_id = cur.fetchone()
+x                    dv["venta_id"] = venta_id
+                query = ''' 
+                    INSERT INTO Detalle_venta(prod_id,cantidad,costo_unitario,precio_unitario)
+                    Values (:prod_id,:cant,:costo_unitario,:precio_unitario)
+                '''
+                cur.executemany(query,venta)
 
 
 
