@@ -31,7 +31,7 @@ class GestorPrincipal:
                         prod_id INT PRIMARY KEY AUTOINCREMENT, 
                         precio_venta REAL, 
                         nombre TEXT,
-                        descripcion TEXT,  
+                        desc TEXT,  
                         cat_nom TEXT,
                         FOREIGN KEY (cat_nom) REFERENCES Categoria(nombre)
                     );
@@ -40,13 +40,15 @@ class GestorPrincipal:
                         venta_id INT PRIMARY KEY AUTOINCREMENT,
                         fecha_hora DATETIME DEFAULT CURRENT_TIMESTAMP,  
                         ganancia REAL, 
-                        forma_pago TEXT
+                        costo_total REAL, 
+                        ingreso_total REAL, 
+                        pago TEXT,
                     );
 
                     CREATE TABLE Compra (
                         compra_id INT PRIMARY KEY AUTOINCREMENT,
                         total REAL, 
-                        forma_pago TEXT,
+                        pago TEXT,
                         prov_id INT,
                         FOREIGN KEY (prov_id) REFERENCES Proveedor(prov_id)
                     );
@@ -163,6 +165,11 @@ class GestorPrincipal:
         except Exception as e: 
             print("Error en buscar lotes:", e)
 
+    def update_lotes(self,resultados): 
+        for elem in resultados: 
+            query = ''' 
+            UPDATE Lote SET stock = ? WHERE lote_id = 
+            '''
 
 
 
@@ -176,80 +183,38 @@ class GestorPrincipal:
                 ingreso_total,costo_total  =  0, 0 
 
                 for dv in venta:
-                    lotes = get_lotes(venta)
-                    dv["costo_unitario"], dv["precio_venta"] = 0, 0         
-                    query = '''
-                        SELECT lot.costo_unitario, prod.precio_venta 
-                        FROM Prod pr join Lote lot on (pr.prod_id = lot.prod_id)
-                        Where pr.prod_id = ?
-                    '''
-                    cur.execute(query,(dv["prod_id"]))
-                    dv["costo_unitario"], dv["precio_venta"] = cur.fetchone()
+                    lotes = get_lotes(dv) 
+                    # lotes = [(l.id,l.costo_unitario, l.stock,p.precio_venta),..,(n)]
+                    i = 0
+                    while dv["cant"] > 0:
+                        # dv["cant"] = cantidad por vender 
 
-                    ingreso_total += precio_venta * dv["cant"]
-                    costo_total += costo_unitario * dv["cant"]
+                        # si el stock < dv["cant"] entonces el stock restante es 0 
+                        # sino es stock - dv["cant"]
+                        lote_mayor = lotes[i][2] - dv["cant"]
+                        cant_stock = 0 if lote_mayor < 0 else lote_mayor
 
-                query = '''
-                    INSERT INTO Venta(ingreso_total,costo_total,ganancia,pago)
-                    VALUES (?,?,?,?)
-                    RETURNING venta_id
-                '''
-                ganancia = ingreso_total - costo_total 
-                cur.execute(query,(ingreso_total,costo_total,ganancia,pago))
-                venta_id = cur.fetchone()
-                for dv in venta: 
-                    dv["venta_id"] = venta_id
-                query = ''' 
-                    INSERT INTO Detalle_venta(prod_id,cantidad,costo_unitario,precio_unitario)
-                    Values (:prod_id,:cant,:costo_unitario,:precio_unitario)
-                '''
-                cur.executemany(query,venta)
+                        # si el stock > dv["cant"] entonces la cant_v es dv["cant"] (todo)
+                        # sino es lo que habia en el lote 
+                        aux = dv["cant"] - lotes[i][2]
+                        cant_vendida = dv["cant"] if aux <= 0 else lote[2] 
+
+                        dv["cant"] = aux 
+                        resultados.append((lotes[i][0],lotes[i][1],cant_vendida,cant_stock))
+                        i += 1 
 
 
-        try: 
-            if self.conn: 
-                cur = self.conn.cursor()
-                ingreso_total,costo_total  =  0, 0 
-                query = '''
-                    INSERT INTO Venta(ingreso_total,costo_total,ganancia,pago)
-                    VALUES (?,?,?,?)
-                    RETURNING venta_id
-                '''
-                cur.execute(query,(0,0,0,pago))
-                venta_id = cur.fetchone()
-
-                for dv in venta:
-                    query = '''
-                        INSERT INTO Detalle_venta (prod_id,cantidad,costo_unitario,precio_unitario,venta_id)
-                        SELECT p.prod_id, :cant, L.costo_unitario, p.precio_venta, :venta_id
-                        FROM Prod p join Lote l on (p.prod_id = l.prod_id)
-                        WHERE p.prod_id = :prod_id 
-                        ORDER BY L.fecha_hora DESC
-                        LIMIT 1 
-                    '''
-                    cur.execute(query,(dv["prod_id"]))
-                    dv["costo_unitario"], dv["precio_venta"] = cur.fetchone()
-
-                    ingreso_total += precio_venta * dv["cant"]
-                    costo_total += costo_unitario * dv["cant"]
-
-                query = '''
-                    INSERT INTO Venta(ingreso_total,costo_total,ganancia,pago)
-                    VALUES (?,?,?,?)
-                    RETURNING venta_id
-                '''
-                ganancia = ingreso_total - costo_total 
-                cur.execute(query,(ingreso_total,costo_total,ganancia,pago))
-                venta_id = cur.fetchone()
-x                    dv["venta_id"] = venta_id
-                query = ''' 
-                    INSERT INTO Detalle_venta(prod_id,cantidad,costo_unitario,precio_unitario)
-                    Values (:prod_id,:cant,:costo_unitario,:precio_unitario)
-                '''
-                cur.executemany(query,venta)
+ 
 
 
+                        # OBTENER VENTA CON RESULTADOS 
+                    for elem in resultados: 
+                        costo_total += elem[3] * elem[1] # cant_v * 
+                        ingreso_total += lotes[0][3] * elem[1] 
 
 
-
-
+                    for elem in resultados: 
+                        query = '''
+                            INSERT INTO Detalle_venta(prod_id,venta_id,cantidad,precio_unitario,costo_unitario)
+                            VALUES (:prod_id,:venta_id,:cantidad,:precio_unitario,:costo_unitario)
+                        '''
