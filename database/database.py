@@ -16,66 +16,66 @@ class GestorPrincipal:
                 cur = self.conn.cursor() 
                 query = ''' 
                     CREATE TABLE Proveedor ( 
-                        prov_id INT PRIMARY KEY AUTOINCREMENT,
+                        prov_id INTEGER PRIMARY KEY AUTOINCREMENT,
                         telefono TEXT, 
                         nombre TEXT, 
                         email TEXT
                     );
 
                     CREATE TABLE Categoria (
-                        cat_id INT PRIMARY KEY,
-                        nombre TEXT
+                        cat_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        nombre TEXT UNIQUE
                     );
 
                     CREATE TABLE Prod ( 
-                        prod_id INT PRIMARY KEY AUTOINCREMENT, 
+                        prod_id INTEGER PRIMARY KEY AUTOINCREMENT, 
                         precio_venta REAL, 
                         nombre TEXT,
-                        desc TEXT,  
+                        descripcion TEXT,  
                         cat_nom TEXT,
                         FOREIGN KEY (cat_nom) REFERENCES Categoria(nombre)
                     );
 
                     CREATE TABLE Venta (
-                        venta_id INT PRIMARY KEY AUTOINCREMENT,
+                        venta_id INTEGER PRIMARY KEY AUTOINCREMENT,
                         fecha_hora DATETIME DEFAULT CURRENT_TIMESTAMP,  
                         ganancia REAL, 
                         costo_total REAL, 
                         ingreso_total REAL, 
-                        pago TEXT,
+                        pago TEXT
                     );
 
                     CREATE TABLE Compra (
-                        compra_id INT PRIMARY KEY AUTOINCREMENT,
+                        compra_id INTEGER PRIMARY KEY AUTOINCREMENT,
                         total REAL, 
                         pago TEXT,
-                        prov_id INT,
+                        prov_id INT DEFAULT NULL ,
                         FOREIGN KEY (prov_id) REFERENCES Proveedor(prov_id)
                     );
 
                     CREATE TABLE Detalle_Venta (
-                        dv_id INT PRIMARY KEY AUTOINCREMENT,
+                        dv_id INTEGER PRIMARY KEY AUTOINCREMENT,
                         prod_id INT,
                         venta_id INT,
                         cantidad INT,
-                        precio_unitario REAL, 
+                        precio_venta REAL, 
                         costo_total REAL,
                         FOREIGN KEY (prod_id) REFERENCES Prod(prod_id),
                         FOREIGN KEY (venta_id) REFERENCES Venta(venta_id)
                     );
 
                     CREATE TABLE Detalle_Compra (
-                        dc_id INT PRIMARY KEY AUTOINCREMENT,
+                        dc_id INTEGER PRIMARY KEY AUTOINCREMENT,
                         prod_id INT,
                         compra_id INT,
                         cantidad INT,
                         precio_unitario REAL, 
                         FOREIGN KEY (prod_id) REFERENCES Prod(prod_id),
-                        FOREIGN KEY (Compra_id) REFERENCES Compra(Compra_id)
+                        FOREIGN KEY (compra_id) REFERENCES Compra(compra_id)
                     );
 
                     CREATE TABLE Lote ( 
-                        lote_id INT PRIMARY KEY AUTOINCREMENT, 
+                        lote_id INTEGER PRIMARY KEY AUTOINCREMENT, 
                         prod_id INT, 
                         fecha_hora DATETIME DEFAULT CURRENT_TIMESTAMP, 
                         stock INT, 
@@ -103,7 +103,7 @@ class GestorPrincipal:
             if self.conn: 
                 for prod in productos:
                     if 'cat_nom' in prod: 
-                        prod[cat_nom] = prod[cat_nom].capitalize()      
+                        prod["cat_nom"] = prod["cat_nom"].capitalize()      
                 cur = self.conn.cursor()
                 query = '''
                     INSERT INTO Prod (precio_venta, nombre, descripcion, cat_nom) 
@@ -133,6 +133,52 @@ class GestorPrincipal:
         except Exception as e: 
             print("Error:",e)
 
+    def get_categoria(self,item): 
+        """
+        Devuelve una categoria con todos sus atributos en el siguiente orden:
+        (cat_id,nombre)
+        el item puede ser tanto cat_id como nombre
+        """
+        try: 
+            if self.conn:
+                cur = self.conn.cursor() 
+                if isinstance(item,int): 
+                    query = '''
+                    SELECT * FROM Categoria ca WHERE ca.cat_id = ? 
+                    '''
+                else: 
+                    query = '''
+                    SELECT * FROM Categoria ca WHERE ca.nombre = ?
+                    '''
+                cur.execute(query,(item,))
+                return cur.fetchone()
+        except Exception as e: 
+            print("error:",e)
+    def get_categorias(self,item): 
+        """
+        Devuelve las categorias con todos sus atributos en el siguiente orden:
+        ((cat_id,nombre),..,(n))
+        el item puede ser tanto [(item_id),..,(n)] como [(nombre),..,(n)]
+        """
+        try: 
+            if self.conn:
+                cur = self.conn.cursor() 
+                lista = []
+                for elem in item:
+                    if isinstance(elem[0],int): 
+                        query = '''
+                        SELECT * FROM Categoria ca WHERE ca.cat_id = ? 
+                        '''
+                    else: 
+                        query = '''
+                        SELECT * FROM Categoria ca WHERE ca.nombre = ?
+                        '''
+                    cur.execute(query,elem)
+                    lista.append(cur.fetchone())
+                return lista 
+        except Exception as e : 
+            print("error:",e )
+
     def set_provedores(self,provedores): 
         """
         Agrega una lista de provedores a la DB, la lista debe ser de diccionarios con los siguientes valores
@@ -145,7 +191,7 @@ class GestorPrincipal:
                 query = ''' 
                     INSERT INTO Proveedor (telefono,nombre,email) VALUES (:telefono, :nombre, :email) 
                 ''' 
-                cur.executemany(query,categorias)
+                cur.executemany(query,provedores)
                 self.conn.commit()
                 cur.close()
         except Exception as e: 
@@ -156,7 +202,7 @@ class GestorPrincipal:
             if self.conn:
                 cur = self.conn.cursor()
                 query = ''' 
-                    SELECT l.id,l.costo_unitario, l.stock,p.precio_venta
+                    SELECT l.lote_id,l.costo_unitario, l.stock,p.precio_venta
                     FROM Lote l JOIN Prod p on p.prod_id = l.prod_id
                     WHERE l.prod_id = ? and l.stock > 0 
                     ORDER BY l.fecha_hora DESC
@@ -170,6 +216,7 @@ class GestorPrincipal:
     def _Update_lotes(self,resultados): 
         try: 
             if self.conn:
+                cur = self.conn.cursor()
                 new_list = []
                 for elem in resultados: 
                     new_list.append((elem[1],elem[0]))
@@ -190,11 +237,12 @@ class GestorPrincipal:
             if self.conn: 
                 cur = self.conn.cursor()
                 ingreso_total,costo_total  =  0, 0
-                lista_dv, resultados = [],[] 
+                lista_dv = [] 
 
                 for dv in venta:
                     lotes = self._Get_lotes(dv) # lotes = [(l.id,l.costo_unitario, l.stock,p.precio_venta),..,(n)]
-                    i, total_costo_dv = 0,0
+                    i, costo_total_dv = 0,0
+                    resultados = []
 
                     # dv["cant"] = cantidad por vender 
                     cant = dv["cant"]
@@ -202,6 +250,7 @@ class GestorPrincipal:
                         if i >= len(lotes): 
                             self.conn.rollback()
                             return (False,"LOTES INSUFICIENTES")
+
                         # si el stock < dv["cant"] entonces el stock restante es 0 
                         # sino es stock - dv["cant"]
                         lote_mayor = lotes[i][2] - cant
@@ -210,24 +259,24 @@ class GestorPrincipal:
                         # si el stock > dv["cant"] entonces la cant_v es dv["cant"] (todo)
                         # sino es lo que habia en el lote 
                         aux = cant - lotes[i][2]
-                        cant_vendida = cant if aux <= 0 else lote[2] 
+                        cant_vendida = cant if aux <= 0 else lotes[2] 
 
                         cant = aux 
                         resultados.append((lotes[i][0],cant_stock,lotes[i][1]))
 
-                        total_costo_dv += cant_vendida * lotes[i][1] # * costo unitario
+                        costo_total_dv += cant_vendida * lotes[i][1] # * costo unitario
                         ingreso_total += cant_vendida * lotes[i][3] # * precio venta
                         i += 1  
 
                     self._Update_lotes(resultados)  
-                    costo_total += total_costo_dv
+                    costo_total += costo_total_dv
 
                     lista_dv.append({
                         "prod_id" : dv["prod_id"],
                         "venta_id" : 0, 
                         "cant": dv["cant"],
                         "precio_venta": lotes[0][3],
-                        "costo_total": total_costo_dv
+                        "costo_total": costo_total_dv
                         })
 
                 query = '''
@@ -248,6 +297,68 @@ class GestorPrincipal:
                 self.conn.commit()
         except Exception as e: 
             print("Error: ",e)
+    def get_venta(self,venta_id): 
 
+        try: 
+            if self.conn:
+                cur = self.conn.cursor() 
+                query = '''     
+                SELECT * FROM Venta v WHERE v.venta_id = ? 
+                '''
 
+                cur.execute(query,(venta_id,))
+                return cur.fetchone()
+        except Exception as e: 
+            print("Error: ",e)
                         
+    def set_compra(self,compras,pago="Sin Especificar",prov_id=None ): 
+        """
+        Agrega la compra al sistema, ingresa unicamente compra[i]["prod_id"] 
+        , compra[i]["cant"] y compra[i]["precio"]
+        i = {1,2,..,n}
+        """ 
+
+        try: 
+            if self.conn : 
+                cur = self.conn.cursor()
+                total_costo = 0 
+                lista_dc,lista_lotes = [],[]
+                for dc in compras: 
+                    lista_dc.append({
+                        "prod_id" : dc["prod_id"], 
+                        "cantidad" : dc["cant"],
+                        "precio_unitario": dc["precio"],
+                        "compra_id" : 0
+                        })
+                    total_costo += dc["precio"] * dc["cant"]
+                query = '''
+                    INSERT INTO Compra(prov_id,pago,total)
+                    VALUES ( ?, ?, ?)
+                '''
+                cur.execute(query,(prov_id,pago,total_costo))
+                id_compra = cur.lastrowid
+
+                query = '''
+                    INSERT INTO Detalle_Compra(prod_id,cantidad,precio_unitario,compra_id)
+                    VALUES (:prod_id,:cantidad,:precio_unitario,:compra_id)
+                '''
+
+                for dc in lista_dc:
+                    dc["compra_id"] = id_compra
+                    cur.execute(query,dc)
+                    dc_id = cur.lastrowid
+
+                    lista_lotes.append({
+                        "prod_id": dc["prod_id"],
+                        "stock" : dc["cantidad"],
+                        "costo_unitario" : dc["precio_unitario"],
+                        "dc_id" : dc_id,
+                        })
+                query = '''
+                    INSERT INTO Lote(prod_id,stock,costo_unitario,dc_id)
+                    VALUES (:prod_id,:stock,:costo_unitario,:dc_id)
+                '''
+                cur.executemany(query,lista_lotes)
+                self.conn.commit()
+        except Exception as e: 
+            print("Error:",e)
