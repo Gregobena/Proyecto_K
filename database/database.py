@@ -59,7 +59,7 @@ class GestorPrincipal:
                         venta_id INT,
                         cantidad INT,
                         precio_unitario REAL, 
-                        costo_unitario REAL,
+                        costo_total REAL,
                         FOREIGN KEY (prod_id) REFERENCES Prod(prod_id),
                         FOREIGN KEY (venta_id) REFERENCES Venta(venta_id)
                     );
@@ -88,7 +88,7 @@ class GestorPrincipal:
                 cur.executescript(query)
                 cur.close()
                 print("Tablas creadas exitosamente")
-                conn.commit()
+                self.conn.commit()
             else:
                 print("Error iniciando, no conectado a sqlite3")
         except Exception as e: 
@@ -128,6 +128,7 @@ class GestorPrincipal:
                     INSERT INTO Categoria (nombre) VALUES (:nombre) 
                 ''' 
                 cur.executemany(query,categorias)
+                self.conn.commit()
                 cur.close()
         except Exception as e: 
             print("Error:",e)
@@ -145,11 +146,12 @@ class GestorPrincipal:
                     INSERT INTO Proveedor (telefono,nombre,email) VALUES (:telefono, :nombre, :email) 
                 ''' 
                 cur.executemany(query,categorias)
+                self.conn.commit()
                 cur.close()
         except Exception as e: 
             print("Error:",e)
  
-    def get_lotes(self,dv): # arreglar problema de que quede stock viejo por no registrar (error humano) proximamente
+    def _Get_lotes(self,dv): # arreglar problema de que quede stock viejo por no registrar (error humano) proximamente
         try: 
             if self.conn:
                 cur = self.conn.cursor()
@@ -159,62 +161,93 @@ class GestorPrincipal:
                     WHERE l.prod_id = ? and l.stock > 0 
                     ORDER BY l.fecha_hora DESC
                 '''
-                cur.execute(query,(dv["prod_id"]))
+                cur.execute(query,(dv["prod_id"],))
                 lotes = cur.fetchall()
                 return lotes 
         except Exception as e: 
             print("Error en buscar lotes:", e)
 
-    def update_lotes(self,resultados): 
-        for elem in resultados: 
-            query = ''' 
-            UPDATE Lote SET stock = ? WHERE lote_id = 
-            '''
+    def _Update_lotes(self,resultados): 
+        try: 
+            if self.conn:
+                new_list = []
+                for elem in resultados: 
+                    new_list.append((elem[1],elem[0]))
+                query = ''' 
+                    UPDATE Lote SET stock = ? WHERE lote_id = ? 
+                '''
+                cur.executemany(query,new_list)
+        except Exception as e: 
+            print("error al actualizar los lotes: ",e)
 
 
 
-    def set_venta(self,venta,pago=None): # BUSCADOR  QUE TRADUCE LA INFO    
+    def set_venta(self,venta,pago="Sin Especificar"): # BUSCADOR  QUE TRADUCE LA INFO    
         """
         Agrega la venta al sistema, ingresa unicamente venta[i]["prod_id"] y venta[i]["cant"] i = {1,2,..,n}
         """ 
         try: 
             if self.conn: 
                 cur = self.conn.cursor()
-                ingreso_total,costo_total  =  0, 0 
+                ingreso_total,costo_total  =  0, 0
+                lista_dv, resultados = [],[] 
 
                 for dv in venta:
-                    lotes = get_lotes(dv) 
-                    # lotes = [(l.id,l.costo_unitario, l.stock,p.precio_venta),..,(n)]
-                    i = 0
-                    while dv["cant"] > 0:
-                        # dv["cant"] = cantidad por vender 
+                    lotes = self._Get_lotes(dv) # lotes = [(l.id,l.costo_unitario, l.stock,p.precio_venta),..,(n)]
+                    i, total_costo_dv = 0,0
 
+                    # dv["cant"] = cantidad por vender 
+                    cant = dv["cant"]
+                    while cant > 0:
+                        if i >= len(lotes): 
+                            self.conn.rollback()
+                            return (False,"LOTES INSUFICIENTES")
                         # si el stock < dv["cant"] entonces el stock restante es 0 
                         # sino es stock - dv["cant"]
-                        lote_mayor = lotes[i][2] - dv["cant"]
+                        lote_mayor = lotes[i][2] - cant
                         cant_stock = 0 if lote_mayor < 0 else lote_mayor
 
                         # si el stock > dv["cant"] entonces la cant_v es dv["cant"] (todo)
                         # sino es lo que habia en el lote 
-                        aux = dv["cant"] - lotes[i][2]
-                        cant_vendida = dv["cant"] if aux <= 0 else lote[2] 
+                        aux = cant - lotes[i][2]
+                        cant_vendida = cant if aux <= 0 else lote[2] 
 
-                        dv["cant"] = aux 
-                        resultados.append((lotes[i][0],lotes[i][1],cant_vendida,cant_stock))
-                        i += 1 
+                        cant = aux 
+                        resultados.append((lotes[i][0],cant_stock,lotes[i][1]))
+
+                        total_costo_dv += cant_vendida * lotes[i][1] # * costo unitario
+                        ingreso_total += cant_vendida * lotes[i][3] # * precio venta
+                        i += 1  
+
+                    self._Update_lotes(resultados)  
+                    costo_total += total_costo_dv
+
+                    lista_dv.append({
+                        "prod_id" : dv["prod_id"],
+                        "venta_id" : 0, 
+                        "cant": dv["cant"],
+                        "precio_venta": lotes[0][3],
+                        "costo_total": total_costo_dv
+                        })
+
+                query = '''
+                    INSERT INTO Venta (ingreso_total,costo_total,pago,ganancia)
+                    VALUES (?, ?, ?, ?)
+                '''
+                cur.execute(query,(ingreso_total,costo_total,pago,ingreso_total - costo_total))
+                id_venta = cur.lastrowid 
+                for d in lista_dv: 
+                    d["venta_id"] = id_venta
+
+                query = '''
+                    INSERT INTO Detalle_Venta (prod_id,venta_id,cantidad,precio_venta,costo_total)
+                    VALUES (:prod_id, :venta_id, :cant, :precio_venta, :costo_total)
+                '''
+
+                cur.executemany(query,lista_dv)
+                self.conn.commit()
+        except Exception as e: 
+            print("Error: ",e)
 
 
- 
-
-
-                        # OBTENER VENTA CON RESULTADOS 
-                    for elem in resultados: 
-                        costo_total += elem[3] * elem[1] # cant_v * 
-                        ingreso_total += lotes[0][3] * elem[1] 
-
-
-                    for elem in resultados: 
-                        query = '''
-                            INSERT INTO Detalle_venta(prod_id,venta_id,cantidad,precio_unitario,costo_unitario)
-                            VALUES (:prod_id,:venta_id,:cantidad,:precio_unitario,:costo_unitario)
-                        '''
+                        
